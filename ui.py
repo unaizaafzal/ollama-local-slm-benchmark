@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 # FastAPI Backend Target Base URL
-FASTAPI_URL = "http://127.0.0.1:8000"
+FASTAPI_URL = "https://kangaroo-glaring-antibody.ngrok-free.dev"
 
 st.title("💿 Local SLM Performance & Inference Benchmarking")
 st.markdown(
