@@ -1,104 +1,166 @@
 import streamlit as st
-import httpx
-import pandas as pd
+import requests
 
-# Configure modern, wide page layout
+# ── Config ────────────────────────────────────────────────────────────────────
+BACKEND = "http://localhost:8000"
+
 st.set_page_config(
-    page_title="Local SLM Benchmarking Dashboard",
-    page_icon="",
+    page_title="Local SLM Benchmarker",
+    page_icon="🖇",
     layout="wide"
 )
 
-# FastAPI Backend Target Base URL
-FASTAPI_URL = "https://kangaroo-glaring-antibody.ngrok-free.dev"
+# ── Header ─────────────────────────────────────────────────────────────────────
+st.title("Local SLM Benchmarker")
+st.caption("Entirely offline · No API keys · No internet · Your data stays on your machine")
+st.divider()
 
-st.title("💿 Local SLM Performance & Inference Benchmarking")
-st.markdown(
-    "Run fully offline models entirely on your local hardware. Compare execution speeds, "
-    "structural schema adherence, and latency constraints transparently."
+# ── Sidebar: backend status + model list ──────────────────────────────────────
+with st.sidebar:
+    st.subheader("System Status")
+
+    try:
+        r = requests.get(f"{BACKEND}/models", timeout=3)
+        r.raise_for_status()
+        available_models = r.json().get("available", [])
+        st.success("Backend is running")
+        if available_models:
+            st.markdown("**Models ready:**")
+            for m in available_models:
+                st.markdown(f"- `{m}`")
+        else:
+            st.warning("No supported models found. Pull them first.")
+            st.code("ollama pull qwen2.5:1.5b\nollama pull phi3:mini", language="bash")
+
+    except Exception:
+        available_models = []
+        st.error("FastAPI backend not running")
+        st.markdown("Open a terminal and run:")
+        st.code("uvicorn app:app --reload", language="bash")
+
+    st.divider()
+    st.subheader("Privacy")
+    st.markdown(
+        "Everything runs on your hardware. "
+        "Your queries never leave your machine. "
+        "No tokens consumed. No logs sent anywhere."
+    )
+
+# ── Query input ───────────────────────────────────────────────────────────────
+st.subheader("Your Query")
+query = st.text_area(
+    label="query",
+    placeholder="Ask anything — e.g. Explain transformers in simple terms.",
+    height=120,
+    label_visibility="collapsed"
 )
 
-st.sidebar.header(" Hardware & Engine Configuration")
-st.sidebar.info(
-    "**Current Hardware:**\nMac M1 8GB Unified Memory\n\n"
-    "**Configured Models:**\n- Qwen 2.5 (1.5B)\n- Phi-3 Mini (3.8B)"
-)
+# ── Model selector ────────────────────────────────────────────────────────────
+st.subheader("Select Models to Compare")
 
-# Interactive Trigger Button
-trigger_benchmark = st.button(" Fire Sequenced Inference Benchmark", type="primary")
+ALL_MODELS = ["qwen2.5:1.5b", "phi3:mini", "llama3.2:3b"]
 
-if trigger_benchmark:
-    with st.spinner("Executing extraction routines across local models... Watch Activity Monitor."):
+cols = st.columns(3)
+selected = []
+
+for col, model in zip(cols, ALL_MODELS):
+    with col:
+        is_ready = model in available_models
+        label    = f"**`{model}`**" if is_ready else f"~~`{model}`~~ — not installed"
+        checked  = st.checkbox(label, value=is_ready, disabled=not is_ready, key=model)
+        if checked:
+            selected.append(model)
+
+        if not is_ready:
+            st.caption(f"`ollama pull {model}`")
+
+st.markdown("")
+run = st.button("⚡ Compare", type="primary", use_container_width=True, disabled=not available_models)
+
+# ── Results ───────────────────────────────────────────────────────────────────
+if run:
+    if not query.strip():
+        st.warning("Enter a query first.")
+        st.stop()
+    if not selected:
+        st.warning("Select at least one model.")
+        st.stop()
+
+    with st.spinner(f"Running on {len(selected)} model(s)… this takes 20–60s on M1"):
         try:
-            # Reaching out to your FastAPI server endpoint
-            response = httpx.get(f"{FASTAPI_URL}/benchmark/all", timeout=180.0)
-            
-            if response.status_code == 200:
-                results_data = response.json()
-                raw_results = results_data.get("benchmark_results", [])
-                
-                st.success(" Benchmark Routine Completed Successfully!")
-                
-                # --- VISUAL CARD METRICS ---
-                st.subheader(" Foundational Latency Profiles")
-                col1, col2 = st.columns(2)
-                
-                for idx, run in enumerate(raw_results):
-                    target_col = col1 if idx == 0 else col2
-                    with target_col:
-                        model_name = run.get("model", "Unknown")
-                        status = run.get("status", "failed")
-                        latency = run.get("latency_seconds", 0.0)
-                        
-                        if status == "success":
-                            target_col.metric(
-                                label=f" {model_name} (Success)", 
-                                value=f"{latency}s",
-                                delta="Optimal Target" if latency < 15.0 else "VRAM Overhead"
-                            )
-                        else:
-                            target_col.metric(
-                                label=f" {model_name} (Failed)", 
-                                value=f"{latency}s",
-                                delta="Schema Error",
-                                delta_color="inverse"
-                            )
-                
-                st.markdown("---")
-                
-                # --- PARSED VECTOR COMPARISON DATA TABLE ---
-                st.subheader(" Structured Output Extraction Integrity")
-                
-                table_rows = []
-                for run in raw_results:
-                    model_name = run.get("model", "Unknown")
-                    status = run.get("status", "failed")
-                    latency = run.get("latency_seconds", 0.0)
-                    
-                    if status == "success":
-                        extracted_data = run.get("data", {})
-                        trend = extracted_data.get("market_trend_summary", "N/A")
-                        companies = extracted_data.get("companies_mentioned", [])
-                        companies_str = ", ".join([c.get("company_name", "") for c in companies])
-                    else:
-                        trend = "FAIL: Refused schema structure bounds."
-                        companies_str = f"N/A ({run.get('error_type', 'Error')})"
-                    
-                    table_rows.append({
-                        "Model Target": model_name,
-                        "Status Check": " Passed" if status == "success" else " Failed",
-                        "Inference Latency": f"{latency}s",
-                        "Extracted Market Trend Summary": trend,
-                        "Companies Extracted": companies_str
-                    })
-                
-                df = pd.DataFrame(table_rows)
-                st.dataframe(df, width="stretch", hide_index=True)
-                
-            else:
-                st.error(f"Backend Engine returned an operational error code: {response.status_code}")
-                
-        except httpx.ConnectError:
-            st.error(" Connection Failed! Make sure your FastAPI backend app is running on port 8000.")
+            resp = requests.post(
+                f"{BACKEND}/compare",
+                json={"query": query, "models": selected},
+                timeout=180
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.exceptions.ConnectionError:
+            st.error("Lost connection to backend. Is `uvicorn app:app --reload` still running?")
+            st.stop()
         except Exception as e:
-            st.error(f"An unhandled interface error occurred: {str(e)}")
+            st.error(f"Something went wrong: {e}")
+            st.stop()
+
+    results = data.get("results", [])
+    st.divider()
+    st.subheader("Results")
+
+    result_cols = st.columns(len(results))
+    successful  = [r for r in results if r.get("status") == "success"]
+
+    # find fastest for badge
+    fastest = min(successful, key=lambda r: r["latency_seconds"])["model"] if successful else None
+
+    for col, result in zip(result_cols, results):
+        with col:
+            model   = result["model"]
+            status  = result["status"]
+            latency = result.get("latency_seconds", 0)
+            tps     = result.get("tokens_per_second")
+            tokens  = result.get("tokens_generated")
+
+            badge = " ⚡ fastest" if (model == fastest and len(successful) > 1) else ""
+            st.markdown(f"#### `{model}`{badge}")
+
+            if status == "failed":
+                st.error(f"Failed: {result.get('error', 'unknown error')}")
+                continue
+
+            # metrics
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Latency",    f"{latency}s")
+            m2.metric("Tokens/sec", f"{tps}" if tps else "–")
+            m3.metric("Tokens out", f"{tokens}" if tokens else "–")
+
+            # response
+            st.markdown("**Response**")
+            st.markdown(
+                f"<div style='background:#1e1e2e;border:1px solid #313244;"
+                f"border-radius:8px;padding:16px;font-size:0.9rem;line-height:1.7;"
+                f"color:#cdd6f4'>{result['response']}</div>",
+                unsafe_allow_html=True
+            )
+
+    # ── Summary table ──────────────────────────────────────────────────────────
+    if len(successful) > 1:
+        st.divider()
+        st.subheader("📊 Summary")
+        st.table([
+            {
+                "Model":       r["model"],
+                "Latency (s)": r["latency_seconds"],
+                "Tokens/sec":  r.get("tokens_per_second") or "–",
+                "Tokens out":  r.get("tokens_generated") or "–",
+            }
+            for r in successful
+        ])
+        st.caption(
+            "Latency = total wall-clock time · "
+            "Tokens/sec = generation throughput (higher = faster) · "
+            "Quality is subjective — read the responses above"
+        )
+
+    # raw JSON for debugging / learning
+    with st.expander("Raw API response (good for learning)"):
+        st.json(data)
